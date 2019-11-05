@@ -1,0 +1,395 @@
+
+
+import android.app.AlertDialog;
+import android.content.Context;
+import android.content.Intent;
+import android.content.pm.PackageInfo;
+import android.content.pm.PackageManager;
+import android.net.ConnectivityManager;
+import android.net.Uri;
+import android.os.Handler;
+import android.os.StrictMode;
+import android.support.v7.app.ActionBar;
+import android.support.v7.app.AppCompatActivity;
+import android.os.Bundle;
+import android.util.Log;
+import android.view.LayoutInflater;
+import android.view.View;
+import android.view.Window;
+import android.view.WindowManager;
+import android.widget.TextView;
+import android.widget.Toast;
+
+
+import com.crashlytics.android.Crashlytics;
+import com.xtrovix.truckittransport.appversion.AppVersion;
+import com.xtrovix.truckittransport.appversion.CheckAppVersion;
+import com.xtrovix.truckittransport.appversion.Data;
+import com.xtrovix.truckittransport.connection.APIClient;
+import com.xtrovix.truckittransport.login.LoginActivity;
+import com.xtrovix.truckittransport.utils.ConnectionDetector;
+import com.xtrovix.truckittransport.utils.LocationMonitoringService;
+
+import io.fabric.sdk.android.Fabric;
+import retrofit2.Call;
+import retrofit2.Callback;
+import retrofit2.Response;
+import retrofit2.Retrofit;
+import retrofit2.converter.gson.GsonConverterFactory;
+
+public class SplashActivity extends AppCompatActivity {
+
+    private String version;
+    private Data appversiondata;
+
+    @Override
+    protected void onCreate(Bundle savedInstanceState) {
+        super.onCreate(savedInstanceState);
+        Fabric.with(this, new Crashlytics());
+        requestWindowFeature(Window.FEATURE_NO_TITLE);
+        getWindow().setFlags(WindowManager.LayoutParams.FLAG_FULLSCREEN,
+                WindowManager.LayoutParams.FLAG_FULLSCREEN);
+
+        setContentView(R.layout.activity_main);
+
+    }
+
+    @Override
+    protected void onResume() {
+        super.onResume();
+
+        try {
+            PackageInfo pInfo = getPackageManager().getPackageInfo(getPackageName(), 0);
+            version = pInfo.versionName;
+
+            Log.d("check_version", "onCreate: " + version);
+        } catch (PackageManager.NameNotFoundException e) {
+            e.printStackTrace();
+        }
+
+        // Hide Actionbar
+        ActionBar actionBar = getSupportActionBar();
+        if (actionBar != null) {
+            actionBar.hide();
+        }
+
+        checkversion(version, "Transporter");
+
+        if (android.os.Build.VERSION.SDK_INT > 9) {
+            StrictMode.ThreadPolicy policy = new StrictMode.ThreadPolicy.Builder().permitAll().build();
+            StrictMode.setThreadPolicy(policy);
+        }
+
+        checkInternetConnection();
+
+
+    }
+
+    // Method for Check App version
+    private void checkversion(String version, String customer) {
+
+
+            Retrofit retrofit = new Retrofit.Builder()
+                    .baseUrl(APIClient.BASE_URL)
+                    .addConverterFactory(GsonConverterFactory.create())
+                    .build();
+            AppVersion service = retrofit.create(AppVersion.class);
+
+            Call<CheckAppVersion> checkAppVersionCall = service.checkversion(customer, version);
+
+            checkAppVersionCall.enqueue(new Callback<CheckAppVersion>() {
+                @Override
+                public void onResponse(Call<CheckAppVersion> call, Response<CheckAppVersion> response) {
+
+
+                    if (response.toString().contains("code=200")) {
+
+                        if (response.body().getStatus().equals(1)) {
+
+                            CheckAppVersion checkAppVersion = response.body();
+
+                            appversiondata = checkAppVersion.getData();
+
+                            if (checkAppVersion.getMsg().equalsIgnoreCase("Up To Date")) {
+
+                                Toast.makeText(SplashActivity.this, "Up To date...", Toast.LENGTH_SHORT).show();
+
+                                // Splash Handle
+                                final Handler handler = new Handler();
+                                handler.postDelayed(new Runnable() {
+                                    @Override
+                                    public void run() {
+
+                                        // Calling LoginActivity
+                                        Intent i = new Intent(SplashActivity.this, LoginActivity.class);
+                                        startActivity(i);
+                                        finish();
+
+                                    }
+                                }, 1000);
+
+                            } else {
+
+                                if (appversiondata.getPriority().equalsIgnoreCase("Normal"))
+                                {
+                                    showPopup(1, appversiondata.getMessage());
+                                }
+
+                                if (appversiondata.getPriority().equalsIgnoreCase("Emergency")) {
+
+                                    showPopup(2, appversiondata.getMessage());
+
+                                }
+                                if (appversiondata.getPriority().equalsIgnoreCase("Maintainance")) {
+
+                                    showPopup(3, appversiondata.getMessage());
+
+                                }
+                            }
+
+                        }
+                    }
+
+                }
+
+                @Override
+                public void onFailure(Call<CheckAppVersion> call, Throwable t) {
+
+
+                    Log.d("error_checkversion", "onFailure: "+t.getMessage()+t.toString());
+
+                }
+            });
+        }
+
+
+    private void showPopup(int value,String msg) {
+
+        LayoutInflater factory = LayoutInflater.from(SplashActivity.this);
+        final View deleteDialogView = factory.inflate(R.layout.raw_for_checkversion, null);
+        final AlertDialog deleteDialog = new AlertDialog.Builder(SplashActivity.this).create();
+        deleteDialog.setView(deleteDialogView);
+
+
+        TextView update = deleteDialogView.findViewById(R.id.update);
+        TextView cancel = deleteDialogView.findViewById(R.id.cancel);
+        TextView force_to_update = deleteDialogView.findViewById(R.id.force_to_update);
+        TextView message = deleteDialogView.findViewById(R.id.message);
+
+        if (value==1){
+
+            force_to_update.setVisibility(View.GONE);
+            message.setText(""+msg);
+        }
+        if (value==2){
+
+            update.setVisibility(View.GONE);
+            cancel.setVisibility(View.GONE);
+            message.setText(""+msg);
+        }
+        if (value==3){
+
+            update.setVisibility(View.GONE);
+            cancel.setVisibility(View.GONE);
+            force_to_update.setVisibility(View.GONE);
+            message.setText(""+msg);
+        }
+        update.setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View v) {
+
+              //  checkInternetConnection();
+                deleteDialog.dismiss();
+
+                final String appPackageName = getPackageName(); // getPackageName() from Context or Activity object
+                try {
+                    startActivity(new Intent(Intent.ACTION_VIEW, Uri.parse("market://details?id=" + appPackageName)));
+                } catch (android.content.ActivityNotFoundException anfe) {
+                    startActivity(new Intent(Intent.ACTION_VIEW, Uri.parse("https://play.google.com/store/apps/details?id=" + appPackageName)));
+                }
+            }
+        });
+
+        cancel.setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View v) {
+
+                deleteDialog.dismiss();
+                Intent i = new Intent(SplashActivity.this, LoginActivity.class);
+                startActivity(i);
+                finish();
+            }
+        });
+
+        deleteDialog.show();
+        deleteDialog.setCancelable(false);
+
+        force_to_update.setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View v) {
+
+                final String appPackageName = getPackageName(); // getPackageName() from Context or Activity object
+                try {
+                    startActivity(new Intent(Intent.ACTION_VIEW, Uri.parse("market://details?id=" + appPackageName)));
+                } catch (android.content.ActivityNotFoundException anfe) {
+                    startActivity(new Intent(Intent.ACTION_VIEW, Uri.parse("https://play.google.com/store/apps/details?id=" + appPackageName)));
+                }
+            }
+        });
+
+        deleteDialog.show();
+        deleteDialog.setCancelable(false);
+
+
+    }
+
+
+
+    private boolean checkInternetConnection() {
+
+        if((new ConnectionDetector(this).isConnectingToInternet())){
+            Log.d("internet status","Internet Access");
+
+            return true;
+        }
+        else{
+            Log.d("internet status","no Internet Access");
+
+            LayoutInflater factory = LayoutInflater.from(this);
+            final View deleteDialogView = factory.inflate(R.layout.raw_file_for_internet_connection, null);
+            final AlertDialog deleteDialog = new AlertDialog.Builder(this).create();
+            deleteDialog.setView(deleteDialogView);
+
+
+            TextView retry = deleteDialogView.findViewById(R.id.retry_internet_connection); // textview retry
+            TextView exit = deleteDialogView.findViewById(R.id.exit_internet_connection); // textview exit
+
+            retry.setOnClickListener(new View.OnClickListener() {
+                @Override
+                public void onClick(View v) {
+
+                    checkInternetConnection();
+                    deleteDialog.dismiss();
+                }
+            });
+
+            exit.setOnClickListener(new View.OnClickListener() {
+                @Override
+                public void onClick(View v) {
+
+                    SplashActivity.this.finish();
+                    deleteDialog.dismiss();
+                }
+            });
+
+            deleteDialog.show();
+            deleteDialog.setCancelable(false);
+            deleteDialog.setCanceledOnTouchOutside(false);
+
+            return false;
+        }
+
+    }
+
+}
+
+              **************************** XML raw_for_checkversion  ************************************
+                 
+<?xml version="1.0" encoding="UTF-8"?>
+
+<android.support.v7.widget.CardView xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content">
+
+
+    -
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:orientation="vertical">
+
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="@dimen/height_50"
+            android:layout_gravity="center"
+            android:background="@color/colorPrimary"
+            android:fontFamily="@font/montserrat_bold"
+            android:gravity="center"
+            android:text="App Version"
+            android:textColor="@color/white"
+            android:textSize="@dimen/text_size18" />
+
+        <TextView
+            android:id="@+id/message"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_gravity="center"
+            android:layout_margin="@dimen/margin_10"
+            android:fontFamily="@font/montserrat_semibold"
+            android:gravity="center"
+            android:padding="@dimen/padding_10"
+            android:text="Message"
+            android:textSize="@dimen/text_size16" />
+
+        <!--<View android:layout_width="match_parent" android:layout_height="1dp" android:background="@color/colorPrimary"/>-->
+
+
+        -
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="horizontal">
+
+            <TextView
+                android:id="@+id/update"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_gravity="center"
+                android:layout_margin="@dimen/margin_10"
+                android:layout_weight="1"
+                android:fontFamily="@font/montserrat_semibold"
+                android:gravity="center"
+                android:padding="@dimen/padding_10"
+                android:text="Update"
+                android:textColor="@color/colorPrimary"
+                android:textSize="@dimen/text_size16" />
+
+            <TextView
+                android:id="@+id/cancel"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_gravity="center"
+                android:layout_margin="@dimen/margin_10"
+                android:layout_weight="1"
+                android:fontFamily="@font/montserrat_semibold"
+                android:gravity="center"
+                android:padding="@dimen/padding_10"
+                android:text="Cancel"
+                android:textColor="@color/colorPrimary"
+                android:textSize="@dimen/text_size16" />
+
+        </LinearLayout>
+
+        <TextView
+            android:id="@+id/force_to_update"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_gravity="center"
+            android:layout_margin="@dimen/margin_10"
+            android:layout_weight="1"
+            android:background="@drawable/rounded_background"
+            android:fontFamily="@font/montserrat_semibold"
+            android:gravity="center"
+            android:padding="@dimen/padding_10"
+            android:text="Update"
+            android:textColor="@color/white"
+            android:textSize="@dimen/text_size16" />
+
+    </LinearLayout>
+
+</android.support.v7.widget.CardView>                           
+                              
+                              
+                              
